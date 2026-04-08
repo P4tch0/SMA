@@ -4,6 +4,10 @@ A native macOS app for Steam Guard 2FA codes and trade confirmations. Built with
 
 **The first fully-featured Steam Desktop Authenticator for Mac.**
 
+<p align="center">
+  <img src="screenshots/main.png" alt="SMA Main Screen" width="520">
+</p>
+
 ---
 
 ## Features
