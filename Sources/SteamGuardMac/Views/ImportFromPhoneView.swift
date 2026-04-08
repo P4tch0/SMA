@@ -64,7 +64,7 @@ struct ImportFileView: View {
         .frame(minWidth: 480, idealWidth: 500, minHeight: 380, idealHeight: 440)
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: [.json, .data, UTType(filenameExtension: "maFile") ?? .data],
+            allowedContentTypes: [.item],  // Allow all files — we validate content ourselves
             allowsMultipleSelection: true
         ) { result in
             handleFileImport(result)
@@ -260,18 +260,23 @@ struct ImportFileView: View {
                 return
             }
 
-            // Try as text (BOM, whitespace)
-            if let text = String(data: data, encoding: .utf8),
-               let account = PhoneImporter.parseGuardFile(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                try PhoneImporter.saveAccount(account)
-                importedAccounts.append(account)
-                done = true
-                return
+            // Try as text (BOM, whitespace, UTF-8 with or without BOM)
+            let encodings: [String.Encoding] = [.utf8, .utf16, .ascii]
+            for encoding in encodings {
+                if let text = String(data: data, encoding: encoding)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   let account = PhoneImporter.parseGuardFile(text) {
+                    try PhoneImporter.saveAccount(account)
+                    importedAccounts.append(account)
+                    done = true
+                    return
+                }
             }
 
-            errorMessage = "Could not parse \(url.lastPathComponent). Make sure it's a valid maFile or Steamguard JSON."
+            // Show what we got for debugging
+            let preview = String(data: data.prefix(100), encoding: .utf8) ?? "binary data"
+            errorMessage = "Could not parse \(url.lastPathComponent). File starts with: \(preview.prefix(50))..."
         } catch {
-            errorMessage = "Failed to import: \(error.localizedDescription)"
+            errorMessage = "Failed to read \(url.lastPathComponent): \(error.localizedDescription)"
         }
     }
 }
