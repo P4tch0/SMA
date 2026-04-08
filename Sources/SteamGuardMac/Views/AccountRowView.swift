@@ -11,6 +11,7 @@ struct AccountRowView: View {
     @State private var isHovered = false
     @State private var codeHovered = false
     @State private var tradeHovered = false
+    @State private var removeHovered = false
     @State private var showRemoveConfirm = false
 
     private var timerColor: Color {
@@ -98,7 +99,7 @@ struct AccountRowView: View {
                 if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
 
-            // Trade confirmations — labeled button with hover expand
+            // Trade confirmations — green hover effect
             Button(action: onConfirmTrades) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.triangle.2.circlepath")
@@ -109,29 +110,40 @@ struct AccountRowView: View {
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
+                .foregroundColor(tradeHovered ? .white : .green.opacity(0.8))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(tradeHovered ? .green.opacity(0.8) : .green.opacity(0.1))
+                .cornerRadius(6)
+                .scaleEffect(tradeHovered ? 1.05 : 1.0)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .onHover { h in
                 withAnimation(.easeOut(duration: 0.15)) { tradeHovered = h }
+                if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
 
-            // Hide button — visible on hover with label
+            // Remove button — visible on row hover, red on button hover
             if isHovered {
                 Button { showRemoveConfirm = true } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "eye.slash")
-                            .font(.system(size: 9, weight: .medium))
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10, weight: .medium))
                         Text("Remove")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 10, weight: .medium))
                     }
-                    .foregroundColor(.secondary.opacity(0.6))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(.secondary.opacity(0.08))
-                    .cornerRadius(4)
+                    .foregroundColor(removeHovered ? .white : .red.opacity(0.7))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(removeHovered ? .red.opacity(0.8) : .red.opacity(0.1))
+                    .cornerRadius(6)
+                    .scaleEffect(removeHovered ? 1.05 : 1.0)
                 }
                 .buttonStyle(.plain)
+                .onHover { h in
+                    withAnimation(.easeOut(duration: 0.15)) { removeHovered = h }
+                    if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
                 .help("Remove account from SMA")
                 .transition(.opacity)
             }
