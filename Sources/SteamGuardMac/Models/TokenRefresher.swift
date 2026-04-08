@@ -57,35 +57,4 @@ enum TokenRefresher {
         return String(first)
     }
 
-    /// Refresh the access token using the refresh token
-    /// Returns the new steamLoginSecure cookie value, or nil on failure
-    static func refreshAccessToken(refreshToken: String, steamID: String) async -> String? {
-        let urlString = "https://api.steampowered.com/IAuthenticationService/GenerateAccessTokenForApp/v1/"
-        guard let url = URL(string: urlString) else { return nil }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
-        let body = "refresh_token=\(refreshToken)&steamid=\(steamID)"
-        request.httpBody = body.data(using: .utf8)
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else { return nil }
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let responseObj = json["response"] as? [String: Any],
-                  let newAccessToken = responseObj["access_token"] as? String else {
-                return nil
-            }
-
-            // Reconstruct the steamLoginSecure value
-            let encodedSteamID = steamID
-            return "\(encodedSteamID)%7C%7C\(newAccessToken)"
-        } catch {
-            return nil
-        }
-    }
 }

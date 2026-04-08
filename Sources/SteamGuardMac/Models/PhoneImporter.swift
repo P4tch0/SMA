@@ -309,6 +309,10 @@ enum PhoneImporter {
         let jsonData = try JSONSerialization.data(withJSONObject: maData, options: .prettyPrinted)
         try jsonData.write(to: filePath)
 
+        // Create per-account session folder so it exists when user logs in later
+        let sessionAccountName = account.accountName.isEmpty ? String(account.steamId) : account.accountName
+        KeychainHelper.ensureAccountDir(for: sessionAccountName)
+
         // Update manifest
         let manifestPath = maFilesDir.appendingPathComponent("manifest.json")
         var manifest: [String: Any]

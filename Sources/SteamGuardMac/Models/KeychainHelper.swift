@@ -2,6 +2,8 @@ import Foundation
 import CryptoKit
 
 /// Stores session data in AES-256-GCM encrypted files in Application Support.
+/// Per-account folder structure: sessions/{accountName}/session.enc
+/// Shared encryption key at: sessions/.sma_key
 enum KeychainHelper {
     private static var storageDir: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -12,9 +14,31 @@ enum KeychainHelper {
         try? FileManager.default.createDirectory(atPath: storageDir, withIntermediateDirectories: true)
     }
 
-    private static func filePath(for account: String, suffix: String = "session") -> String {
-        let safe = account.replacingOccurrences(of: "/", with: "_")
-        return "\(storageDir)/\(safe).\(suffix)"
+    /// Returns (and creates if needed) the per-account directory.
+    private static func accountDir(for accountName: String) -> String {
+        let safe = accountName.replacingOccurrences(of: "/", with: "_")
+        let dir = "\(storageDir)/\(safe)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Path to the encrypted session file for an account.
+    private static func sessionPath(for accountName: String) -> String {
+        return "\(accountDir(for: accountName))/session.enc"
+    }
+
+    /// Migrate old-style flat file ({accountName}.session) to per-account folder if needed.
+    private static func migrateIfNeeded(for accountName: String) {
+        let safe = accountName.replacingOccurrences(of: "/", with: "_")
+        let oldPath = "\(storageDir)/\(safe).session"
+        let newPath = sessionPath(for: accountName)
+
+        if FileManager.default.fileExists(atPath: oldPath) && !FileManager.default.fileExists(atPath: newPath) {
+            try? FileManager.default.moveItem(atPath: oldPath, toPath: newPath)
+            // Also clean up old refresh token file if present
+            let oldRefresh = "\(storageDir)/\(safe).refresh"
+            try? FileManager.default.removeItem(atPath: oldRefresh)
+        }
     }
 
     /// Returns the encryption key, generating and persisting a random one on first use.
@@ -74,7 +98,6 @@ enum KeychainHelper {
     // MARK: - Session cookies
 
     static func saveSession(accountName: String, cookies: [HTTPCookie]) {
-        ensureDir()
         let cookieData = cookies.compactMap { cookie -> [String: String]? in
             return [
                 "name": cookie.name,
@@ -84,11 +107,13 @@ enum KeychainHelper {
             ]
         }
         guard let jsonData = try? JSONSerialization.data(withJSONObject: cookieData) else { return }
-        encryptAndSave(jsonData, to: filePath(for: accountName))
+        encryptAndSave(jsonData, to: sessionPath(for: accountName))
     }
 
     static func loadSession(accountName: String) -> [HTTPCookie]? {
-        guard let jsonData = loadAndDecrypt(from: filePath(for: accountName)),
+        migrateIfNeeded(for: accountName)
+
+        guard let jsonData = loadAndDecrypt(from: sessionPath(for: accountName)),
               let cookieArray = try? JSONSerialization.jsonObject(with: jsonData) as? [[String: String]] else {
             return nil
         }
@@ -110,40 +135,22 @@ enum KeychainHelper {
         return cookies.isEmpty ? nil : cookies
     }
 
-    /// Update a specific cookie value in the stored session
-    static func updateCookieValue(accountName: String, cookieName: String, newValue: String) {
-        guard let jsonData = loadAndDecrypt(from: filePath(for: accountName)),
-              var cookieArray = try? JSONSerialization.jsonObject(with: jsonData) as? [[String: String]] else { return }
-
-        for i in 0..<cookieArray.count {
-            if cookieArray[i]["name"] == cookieName {
-                cookieArray[i]["value"] = newValue
-            }
-        }
-
-        guard let updatedData = try? JSONSerialization.data(withJSONObject: cookieArray) else { return }
-        encryptAndSave(updatedData, to: filePath(for: accountName))
-    }
-
     static func hasSession(accountName: String) -> Bool {
-        return FileManager.default.fileExists(atPath: filePath(for: accountName))
+        migrateIfNeeded(for: accountName)
+        return FileManager.default.fileExists(atPath: sessionPath(for: accountName))
     }
 
     static func deleteSession(accountName: String) {
-        try? FileManager.default.removeItem(atPath: filePath(for: accountName))
-        try? FileManager.default.removeItem(atPath: filePath(for: accountName, suffix: "refresh"))
+        let dir = accountDir(for: accountName)
+        try? FileManager.default.removeItem(atPath: "\(dir)/session.enc")
+        // Also clean up old-style files if they exist
+        let safe = accountName.replacingOccurrences(of: "/", with: "_")
+        try? FileManager.default.removeItem(atPath: "\(storageDir)/\(safe).session")
+        try? FileManager.default.removeItem(atPath: "\(storageDir)/\(safe).refresh")
     }
 
-    // MARK: - Refresh token (stored separately, lasts ~200 days)
-
-    static func saveRefreshToken(accountName: String, token: String) {
-        ensureDir()
-        guard let data = token.data(using: .utf8) else { return }
-        encryptAndSave(data, to: filePath(for: accountName, suffix: "refresh"))
-    }
-
-    static func loadRefreshToken(accountName: String) -> String? {
-        guard let data = loadAndDecrypt(from: filePath(for: accountName, suffix: "refresh")) else { return nil }
-        return String(data: data, encoding: .utf8)
+    /// Create the per-account session folder (e.g. on import, before any login).
+    static func ensureAccountDir(for accountName: String) {
+        _ = accountDir(for: accountName)
     }
 }

@@ -5,7 +5,8 @@ struct SteamLoginView: View {
     let account: SteamAccount
     let onLoginSuccess: () -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var showDisclaimer = true
+    // Show disclaimer only on first ever login — skip on re-login
+    @State private var showDisclaimer = !UserDefaults.standard.bool(forKey: "sma_disclaimer_accepted")
     @State private var isLoading = true
     @State private var currentURL = ""
 
@@ -127,6 +128,7 @@ struct SteamLoginView: View {
             Spacer()
 
             Button {
+                UserDefaults.standard.set(true, forKey: "sma_disclaimer_accepted")
                 withAnimation { showDisclaimer = false }
             } label: {
                 Text("Continue to Steam Login")
@@ -180,6 +182,8 @@ struct SteamWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // Use non-persistent for login (fresh session each time, no cross-account bleed)
+        // After login, cookies are copied to the persistent store for silent refresh
         config.websiteDataStore = .nonPersistent()
 
         let webView = FocusableWebView(frame: .zero, configuration: config)
@@ -417,25 +421,6 @@ struct SteamWebView: NSViewRepresentable {
                         $0.name.starts(with: "steamMachineAuth")
                     }
                     KeychainHelper.saveSession(accountName: self.accountName, cookies: relevantCookies)
-
-                    // Save refresh token separately (lasts ~200 days)
-                    // It's in cookies named steamRefresh_steam or steamRefresh_steamcommunity on login.steampowered.com
-                    let refreshCookies = cookies.filter {
-                        $0.name.starts(with: "steamRefresh_") && !$0.value.isEmpty
-                    }
-                    if let refreshToken = refreshCookies.first?.value {
-                        KeychainHelper.saveRefreshToken(accountName: self.accountName, token: refreshToken)
-                    } else {
-                        // Fallback: extract refresh token from steamLoginSecure JWT if it has "renew" audience
-                        // Some Steam login flows embed refresh capability in the main token
-                        if let loginCookie = allSteamCookies.first(where: { $0.name == "steamLoginSecure" }),
-                           let jwt = TokenRefresher.extractAccessToken(from: loginCookie.value),
-                           let payload = TokenRefresher.decodeJWTPayload(jwt),
-                           let aud = payload["aud"] as? [String],
-                           aud.contains("renew") {
-                            KeychainHelper.saveRefreshToken(accountName: self.accountName, token: jwt)
-                        }
-                    }
 
                     DispatchQueue.main.async {
                         self.onLoginSuccess()

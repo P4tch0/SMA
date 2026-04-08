@@ -294,18 +294,11 @@ class AuthenticatorSetup: ObservableObject {
 
     private func saveSession(accountName: String) {
         guard !loginCookies.isEmpty else { return }
-
         let relevantCookies = loginCookies.filter {
             ["steamLoginSecure", "sessionid"].contains($0.name) ||
             $0.name.starts(with: "steamMachineAuth")
         }
         KeychainHelper.saveSession(accountName: accountName, cookies: relevantCookies)
-
-        // Save refresh token if available
-        let refreshCookies = loginCookies.filter { $0.name.starts(with: "steamRefresh_") && !$0.value.isEmpty }
-        if let refreshToken = refreshCookies.first?.value {
-            KeychainHelper.saveRefreshToken(accountName: accountName, token: refreshToken)
-        }
     }
 
     private func saveMaFile(_ auth: NewAuthenticator, fullyEnrolled: Bool = false) {

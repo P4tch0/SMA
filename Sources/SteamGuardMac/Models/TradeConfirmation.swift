@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 
 struct TradeConfirmation: Identifiable {
     let id: String
@@ -31,25 +32,43 @@ class TradeConfirmationManager: ObservableObject {
     @Published var partnerInfo: [String: PartnerInfo] = [:]  // keyed by confirmation ID
 
     /// Ensures the access token is fresh. Returns valid cookies or nil if login is needed.
+    /// If expired, loads steamcommunity.com in a hidden WebView to trigger Steam's JS auto-refresh.
     private func getValidCookies(for accountName: String) async -> [HTTPCookie]? {
-        guard var cookies = KeychainHelper.loadSession(accountName: accountName) else {
+        guard let cookies = KeychainHelper.loadSession(accountName: accountName) else {
             return nil
         }
 
+        // Check if the token is still valid
         if let loginCookie = cookies.first(where: { $0.name == "steamLoginSecure" }),
-           TokenRefresher.isAccessTokenExpired(cookieValue: loginCookie.value) {
-            if let refreshToken = KeychainHelper.loadRefreshToken(accountName: accountName),
-               let steamID = TokenRefresher.extractSteamID(from: loginCookie.value),
-               let newCookieValue = await TokenRefresher.refreshAccessToken(refreshToken: refreshToken, steamID: steamID) {
-                KeychainHelper.updateCookieValue(accountName: accountName, cookieName: "steamLoginSecure", newValue: newCookieValue)
-                cookies = KeychainHelper.loadSession(accountName: accountName) ?? cookies
-            } else {
-                KeychainHelper.deleteSession(accountName: accountName)
-                return nil
-            }
+           !TokenRefresher.isAccessTokenExpired(cookieValue: loginCookie.value) {
+            return cookies
         }
 
-        return cookies
+        // Token expired — try silent refresh via WebView cookie injection
+        if let refreshedCookies = await silentWebRefresh(accountName: accountName) {
+            KeychainHelper.saveSession(accountName: accountName, cookies: refreshedCookies)
+            return KeychainHelper.loadSession(accountName: accountName)
+        }
+
+        // Refresh failed — need full re-login
+        return nil
+    }
+
+    /// Loads steamcommunity.com in a hidden non-persistent WebView with injected cookies.
+    /// Steam's JS will refresh the access token automatically. Returns new cookies if successful.
+    private func silentWebRefresh(accountName: String) async -> [HTTPCookie]? {
+        guard let storedCookies = KeychainHelper.loadSession(accountName: accountName) else {
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                let helper = SilentRefreshHelper(cookies: storedCookies) { result in
+                    continuation.resume(returning: result)
+                }
+                helper.start()
+            }
+        }
     }
 
     private func cookieHeader(from cookies: [HTTPCookie]) -> String {
@@ -132,12 +151,16 @@ class TradeConfirmationManager: ObservableObject {
                 let parsed = confArray.compactMap { item -> TradeConfirmation? in
                     let id: String
                     if let s = item["id"] as? String { id = s }
+                    else if let n = item["id"] as? UInt64 { id = String(n) }
                     else if let n = item["id"] as? Int { id = String(n) }
+                    else if let n = item["id"] as? NSNumber { id = n.stringValue }
                     else { return nil }
 
                     let key: String
                     if let s = item["nonce"] as? String { key = s }
+                    else if let n = item["nonce"] as? UInt64 { key = String(n) }
                     else if let n = item["nonce"] as? Int { key = String(n) }
+                    else if let n = item["nonce"] as? NSNumber { key = n.stringValue }
                     else { return nil }
 
                     let type = item["type"] as? Int ?? 0
@@ -305,14 +328,15 @@ class TradeConfirmationManager: ObservableObject {
         }
     }
 
-    func respondToConfirmation(_ confirmation: TradeConfirmation, accept: Bool, account: SteamAccount) async {
+    func respondToConfirmation(_ confirmation: TradeConfirmation, accept: Bool, account: SteamAccount, retryAttempt: Int = 0) async {
         guard let identitySecret = account.identitySecret,
               let deviceID = account.deviceID,
               let steamID = account.steamID,
               let cookies = await getValidCookies(for: account.accountName) else { return }
 
         let tag = accept ? "allow" : "cancel"
-        await SteamTOTP.ensureSynced()
+        // Force fresh time sync on every attempt
+        await SteamTOTP.syncTime()
         let time = SteamTOTP.serverTime
         guard let confHash = SteamTOTP.generateConfirmationHash(identitySecret: identitySecret, time: time, tag: tag) else { return }
 
@@ -329,18 +353,120 @@ class TradeConfirmationManager: ObservableObject {
         request.setValue(cookieHeader(from: cookies), forHTTPHeaderField: "Cookie")
 
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let success = json["success"] as? Bool, success {
-                await MainActor.run {
-                    confirmations.removeAll { $0.id == confirmation.id }
-                    statusMessage = accept ? "Confirmation accepted!" : "Confirmation denied."
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let success: Bool
+                if let b = json["success"] as? Bool { success = b }
+                else if let n = json["success"] as? Int { success = n != 0 }
+                else { success = false }
+
+                if success {
+                    await MainActor.run {
+                        confirmations.removeAll { $0.id == confirmation.id }
+                        statusMessage = accept ? "Confirmation accepted!" : "Confirmation denied."
+                    }
+                } else if retryAttempt < 2 {
+                    // Retry with fresh time sync — likely a stale confirmation hash
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    await respondToConfirmation(confirmation, accept: accept, account: account, retryAttempt: retryAttempt + 1)
+                } else {
+                    let detail = json["detail"] as? String ?? json["message"] as? String ?? "Unknown error"
+                    await MainActor.run { errorMessage = "Failed: \(detail) (HTTP \(httpStatus))" }
                 }
             } else {
-                await MainActor.run { errorMessage = "Failed to \(accept ? "accept" : "deny") confirmation." }
+                let body = String(data: data.prefix(200), encoding: .utf8) ?? "empty"
+                await MainActor.run { errorMessage = "Failed (HTTP \(httpStatus)): \(body)" }
             }
         } catch {
             await MainActor.run { errorMessage = "Network error: \(error.localizedDescription)" }
         }
     }
 }
+
+// MARK: - Silent Refresh Helper
+
+/// Holds a non-persistent WKWebView strongly while it loads steamcommunity.com
+/// with injected cookies to trigger Steam's JS token refresh.
+private class SilentRefreshHelper: NSObject, WKNavigationDelegate {
+    private var webView: WKWebView?
+    private let cookies: [HTTPCookie]
+    private let completion: ([HTTPCookie]?) -> Void
+    private var hasCompleted = false
+
+    init(cookies: [HTTPCookie], completion: @escaping ([HTTPCookie]?) -> Void) {
+        self.cookies = cookies
+        self.completion = completion
+        super.init()
+    }
+
+    func start() {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
+        wv.navigationDelegate = self
+        self.webView = wv
+
+        // Inject the stored cookies into the non-persistent store, then load the page
+        let cookieStore = config.websiteDataStore.httpCookieStore
+        let group = DispatchGroup()
+        for cookie in cookies {
+            group.enter()
+            cookieStore.setCookie(cookie) { group.leave() }
+        }
+        group.notify(queue: .main) {
+            guard let url = URL(string: "https://steamcommunity.com/my/home") else {
+                self.finish(nil)
+                return
+            }
+            wv.load(URLRequest(url: url))
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Wait 2 seconds for Steam's JS to refresh the token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.extractCookies()
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(nil)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(nil)
+    }
+
+    private func extractCookies() {
+        guard let wv = webView else { finish(nil); return }
+
+        wv.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] allCookies in
+            guard let self = self else { return }
+
+            let steamCookies = allCookies.filter {
+                ($0.domain.contains("steampowered.com") || $0.domain.contains("steamcommunity.com")) &&
+                (["steamLoginSecure", "sessionid"].contains($0.name) || $0.name.starts(with: "steamMachineAuth")) &&
+                !$0.value.isEmpty
+            }
+
+            let hasValidToken = steamCookies.contains { cookie in
+                cookie.name == "steamLoginSecure" &&
+                !TokenRefresher.isAccessTokenExpired(cookieValue: cookie.value)
+            }
+
+            self.finish(hasValidToken ? steamCookies : nil)
+        }
+    }
+
+    private func finish(_ result: [HTTPCookie]?) {
+        guard !hasCompleted else { return }
+        hasCompleted = true
+        webView?.navigationDelegate = nil
+        webView = nil
+        completion(result)
+    }
+}
+
