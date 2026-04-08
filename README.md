@@ -15,8 +15,9 @@ A native macOS app for Steam Guard 2FA codes and trade confirmations. Built with
 - **Live 2FA codes** — All your Steam accounts with auto-refreshing codes, synced to Steam's server time
 - **Trade confirmations** — View, accept, and deny trades with partner details (avatar, name, Steam level)
 - **Add Steam Guard** — Set up authenticator on new accounts directly from the app
-- **Import maFile** — Drag & drop existing maFiles from SDA, steamguard-cli, or Android backups
+- **Import maFile** — Drag & drop existing maFiles from SDA, steamguard-cli, or Android backups. Supports SDA-encrypted files (just enter your passkey)
 - **Auto-fill login** — Username locked + 2FA code auto-filled when signing in to Steam
+- **Update notifications** — Checks GitHub releases on launch, notifies you when a new version is available
 - **Session persistence** — Login once, stay logged in for months (auto-refresh tokens)
 - **Encrypted storage** — Sessions encrypted with AES-256-GCM, random key, owner-only file permissions
 - **Zero telemetry** — No analytics, no tracking, no phone-home. Talks to Steam servers only.
