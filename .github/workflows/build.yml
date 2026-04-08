@@ -8,22 +8,35 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build ARM64
+      - name: Build ARM64 (native)
         run: swift build -c release
 
-      - name: Build x86_64
+      - name: Copy ARM64 binary
+        run: cp .build/release/SteamGuardMac /tmp/SteamGuardMac-arm64
+
+      - name: Build x86_64 (cross-compile)
         run: swift build -c release --triple x86_64-apple-macosx13
 
-      - name: Create Universal Binary
+      - name: Find x86_64 binary
         run: |
-          lipo -create \
-            .build/release/SteamGuardMac \
-            .build/x86_64-apple-macosx/release/SteamGuardMac \
-            -output SteamGuardMac-universal
+          X86_BIN=$(find .build -name SteamGuardMac -path "*/x86_64*" -not -path "*.dSYM*" -type f | head -1)
+          echo "Found: $X86_BIN"
+          cp "$X86_BIN" /tmp/SteamGuardMac-x86_64
+
+      - name: Verify architectures
+        run: |
+          file /tmp/SteamGuardMac-arm64
+          file /tmp/SteamGuardMac-x86_64
+
+      - name: Create Universal Binary
+        run: lipo -create /tmp/SteamGuardMac-arm64 /tmp/SteamGuardMac-x86_64 -output SteamGuardMac-universal
+
+      - name: Verify Universal Binary
+        run: lipo -info SteamGuardMac-universal
 
       - name: Package App Bundle
         run: |
@@ -43,9 +56,9 @@ jobs:
             SMA-${{ github.ref_name }}.dmg
 
       - name: Generate SHA256
-        run: shasum -a 256 SMA-${{ github.ref_name }}.dmg > SHA256SUMS.txt
+        run: shasum -a 256 SMA-${{ github.ref_name }}.dmg | tee SHA256SUMS.txt
 
-      - name: Upload Release
+      - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
@@ -56,13 +69,13 @@ jobs:
             ## SMA ${{ github.ref_name }}
 
             **This DMG was built automatically by GitHub Actions from the source code in this repo.**
-            You can verify by comparing the SHA-256 hash or building from source yourself.
+            No manual uploads. Verify the [build log](../../actions) yourself.
 
             ### Verify Download
             ```bash
             shasum -a 256 SMA-${{ github.ref_name }}.dmg
             ```
-            Compare with the hash in `SHA256SUMS.txt`.
+            Compare with `SHA256SUMS.txt` attached to this release.
 
             ### Build from source
             ```bash
