@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var manager = SteamGuardManager()
+    @StateObject private var updateChecker = UpdateChecker()
     @State private var codes: [String: String] = [:]
     @State private var secondsRemaining: Int = 30
     @State private var copiedAccount: String?
@@ -87,6 +88,40 @@ struct ContentView: View {
                 Divider()
             }
 
+            // Update banner
+            if let version = updateChecker.newVersion, let url = updateChecker.releaseURL {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .foregroundColor(.blue)
+                    Text("SMA v\(version) is available")
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Text("Update")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 3)
+                            .background(.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        updateChecker.newVersion = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+                .background(.blue.opacity(0.08))
+            }
+
             // Body
             if let error = manager.errorMessage {
                 Spacer()
@@ -160,7 +195,10 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 340)
-        .onAppear { refreshCodes() }
+        .onAppear {
+            refreshCodes()
+            Task { await updateChecker.checkForUpdate() }
+        }
         .onReceive(timer) { _ in
             secondsRemaining = SteamTOTP.secondsRemaining()
             if secondsRemaining == 30 {
