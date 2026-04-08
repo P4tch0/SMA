@@ -24,21 +24,25 @@ A native macOS app for Steam Guard 2FA codes and trade confirmations. Built with
 
 ## Install
 
-### Download (recommended)
+### Build from source (recommended)
 
-1. Download `SMA-v1.0.0.dmg` from [Releases](../../releases)
-2. Open the DMG and drag **Steam Mac Authenticator** to Applications
-3. First launch: right-click the app → **Open** → **Open** (one-time macOS unsigned app prompt)
-
-### Build from source
+If you handle Steam authenticator secrets, you should verify what you're running. Building from source takes 30 seconds:
 
 ```bash
 git clone https://github.com/P4tch0/SMA.git
 cd SMA
 swift build -c release
+# Binary at .build/release/SteamGuardMac
 ```
 
-Binary will be at `.build/release/SteamGuardMac`.
+### Download DMG
+
+DMG releases are built automatically by [GitHub Actions](../../actions) from the source code in this repo — not uploaded manually. You can verify the build yourself.
+
+1. Download `SMA-v1.0.0.dmg` from [Releases](../../releases)
+2. Open the DMG and drag **Steam Mac Authenticator** to Applications
+3. First launch: right-click the app → **Open** → **Open** (one-time macOS unsigned app prompt)
+4. Verify the hash: `shasum -a 256 SMA-v1.0.0.dmg`
 
 ## Requirements
 
@@ -85,6 +89,20 @@ All communication goes directly to Steam's servers (`api.steampowered.com`, `ste
 - WebKit (Steam login WebView)
 - Security framework (RSA encryption)
 - Zero external packages
+
+## Trust & Transparency
+
+Steam authenticator apps handle sensitive secrets. You should be skeptical — here's why you can trust this one:
+
+| Concern | How SMA addresses it |
+|---------|---------------------|
+| **"The DMG could contain anything"** | DMG is built by [GitHub Actions](../../actions) from source, not uploaded manually. Build it yourself in 30 seconds. |
+| **"No code signing"** | Correct — Apple charges $99/year. Build from source to avoid Gatekeeper entirely. |
+| **"Could steal maFiles"** | Read the source. Every network call goes to `steampowered.com` / `steamcommunity.com`. Zero third-party servers. `grep -rn "https://" Sources/` to verify. |
+| **"Hidden telemetry?"** | Zero analytics, zero crash reporting, zero phone-home. `grep -rni "telemetry\|analytics\|tracking" Sources/` returns nothing. |
+| **"External dependencies?"** | None. `Package.swift` has zero dependencies. Only Apple system frameworks. |
+
+**If you don't trust the binary, build from source.** That's the whole point of open source.
 
 ## Supported Formats
 

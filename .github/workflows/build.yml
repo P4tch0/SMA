@@ -1,0 +1,72 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ARM64
+        run: swift build -c release
+
+      - name: Build x86_64
+        run: swift build -c release --triple x86_64-apple-macosx13
+
+      - name: Create Universal Binary
+        run: |
+          lipo -create \
+            .build/release/SteamGuardMac \
+            .build/x86_64-apple-macosx/release/SteamGuardMac \
+            -output SteamGuardMac-universal
+
+      - name: Package App Bundle
+        run: |
+          mkdir -p "Steam Mac Authenticator.app/Contents/MacOS"
+          mkdir -p "Steam Mac Authenticator.app/Contents/Resources"
+          cp SteamGuardMac-universal "Steam Mac Authenticator.app/Contents/MacOS/SteamGuardMac"
+          cp SteamGuardMac.app/Contents/Info.plist "Steam Mac Authenticator.app/Contents/Info.plist"
+          cp AppIcon.icns "Steam Mac Authenticator.app/Contents/Resources/AppIcon.icns"
+
+      - name: Create DMG
+        run: |
+          mkdir dmg_contents
+          cp -r "Steam Mac Authenticator.app" dmg_contents/
+          ln -s /Applications dmg_contents/Applications
+          hdiutil create -volname "Steam Mac Authenticator" \
+            -srcfolder dmg_contents -ov -format UDZO \
+            SMA-${{ github.ref_name }}.dmg
+
+      - name: Generate SHA256
+        run: shasum -a 256 SMA-${{ github.ref_name }}.dmg > SHA256SUMS.txt
+
+      - name: Upload Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            SMA-${{ github.ref_name }}.dmg
+            SHA256SUMS.txt
+          body: |
+            ## SMA ${{ github.ref_name }}
+
+            **This DMG was built automatically by GitHub Actions from the source code in this repo.**
+            You can verify by comparing the SHA-256 hash or building from source yourself.
+
+            ### Verify Download
+            ```bash
+            shasum -a 256 SMA-${{ github.ref_name }}.dmg
+            ```
+            Compare with the hash in `SHA256SUMS.txt`.
+
+            ### Build from source
+            ```bash
+            git clone https://github.com/P4tch0/SMA.git
+            cd SMA
+            swift build -c release
+            ```
